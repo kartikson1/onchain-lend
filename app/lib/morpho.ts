@@ -1,5 +1,11 @@
 // This file will contain functions to interact with Morpho protocol
 import { LoanPosition, MorphoResponse, Token } from './types';
+import { createPublicClient, http, getContract, formatUnits } from 'viem';
+import { mainnet } from 'viem/chains';
+import { MarketId } from "@morpho-org/blue-sdk";
+
+import { AccrualPosition } from "@morpho-org/blue-sdk-viem/lib/augment/Position";
+
 
 // Common tokens
 export const TOKENS: { [key: string]: Token } = {
@@ -7,6 +13,12 @@ export const TOKENS: { [key: string]: Token } = {
     symbol: 'ETH',
     name: 'Ethereum',
     address: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // Convention for native ETH
+    decimals: 18
+  },
+  WETH: {
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     decimals: 18
   },
   USDC: { 
@@ -26,15 +38,42 @@ export const TOKENS: { [key: string]: Token } = {
     name: 'Wrapped Bitcoin', 
     address: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599',
     decimals: 8
+  },
+  wstETH: {
+    symbol: 'wstETH',
+    name: 'Wrapped stETH',
+    address: '0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0',
+    decimals: 18
   }
 };
 
 // Morpho protocol addresses
 export const MORPHO_ADDRESSES = {
-  // These are placeholders - replace with actual addresses from Morpho documentation
-  MORPHO_BLUE: '0x...',
-  MORPHO_ORACLE: '0x...',
+  MORPHO_BLUE: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb', // Morpho Blue on Ethereum mainnet
 };
+
+// Known Morpho Blue market IDs on mainnet
+export const MORPHO_MARKET_IDS = [
+  // WETH/WSTETH
+  '0x22a23b83be9efc8a5352f4f3e495cf9f8564f96caba658b75890771bf7a01db4',
+  // WETH/USDC
+  '0xe7e9694b754c4d4f7e21faf7f5a5aa0f5a59a231328aeaa92215ef98fb9cd41d',
+  // WETH/DAI 
+  '0xc54d7acf14de29e0e5527cabd7a576506870346a78a11a6762e2cca66322ec41',
+  // USDC/WETH
+  '0x277d0e1779ef284dba98e82bf8ef6857babe2f58a9885ef51ad8b2c9788f0016',
+  // USDC/wBTC
+  '0x7dda9ffb416b62d4d688992eb7d56b14209964a477e224dcc2ae3a9b20e76d5b'
+];
+
+// Morpho Blue ABI (only the functions we need)
+const MORPHO_ABI = [
+  'function position(bytes32 marketId, address user) view returns ((uint256 supplyShares, uint256 borrowShares, uint256 collateral))',
+  'function market(bytes32 id) view returns ((address loan, address collateral, address oracle, address irm, uint256 lltv), uint128 totalSupplyAssets, uint128 totalSupplyShares, uint128 totalBorrowAssets, uint128 totalBorrowShares, uint128 lastUpdate, uint128 fee)',
+  'function idToMarketParams(bytes32 id) view returns (address loan, address collateral, address oracle, address irm, uint256 lltv)',
+  'function isLiquidatable(bytes32 marketId, address borrower) view returns (bool)',
+  'function healthFactor(bytes32 marketId, address borrower) view returns (uint256)'
+];
 
 // Mock function to simulate borrowing from Morpho (to be replaced with actual implementation)
 export async function borrowFromMorpho(
@@ -82,39 +121,72 @@ export function calculateHealthFactor(
   return healthFactor;
 }
 
-// Mock function to get user's open positions
+// Function to get token info by address
+function getTokenByAddress(address: string): Token {
+  for (const token of Object.values(TOKENS)) {
+    if (token.address.toLowerCase() === address.toLowerCase()) {
+      return token;
+    }
+  }
+  // If token not found, return a placeholder token
+  return {
+    symbol: 'UNKNOWN',
+    name: 'Unknown Token',
+    address: address,
+    decimals: 18
+  };
+}
+
+// Actual function to get user's open positions
 export async function getUserPositions(walletAddress: string): Promise<LoanPosition[]> {
-  // This would be replaced with actual calls to Morpho's contracts or subgraphs
   console.log(`Fetching positions for ${walletAddress}`);
   
-  // Mock data for testing
-  const mockPositions: LoanPosition[] = [
-    {
-      id: '0x' + Math.random().toString(16).slice(2),
-      owner: walletAddress,
-      collateralToken: TOKENS.ETH,
-      collateralAmount: '1000000000000000000', // 1 ETH
-      borrowToken: TOKENS.USDC,
-      borrowAmount: '1000000000', // 1000 USDC (6 decimals)
-      timestamp: Date.now() - 86400000, // 1 day ago
-      healthFactor: '2.5',
-      liquidationPrice: '900', // $900
-    },
-    {
-      id: '0x' + Math.random().toString(16).slice(2),
-      owner: walletAddress,
-      collateralToken: TOKENS.ETH,
-      collateralAmount: '500000000000000000', // 0.5 ETH
-      borrowToken: TOKENS.DAI,
-      borrowAmount: '500000000000000000000', // 500 DAI
-      timestamp: Date.now() - 172800000, // 2 days ago
-      healthFactor: '1.8',
-      liquidationPrice: '1100', // $1100
+  try {
+    // Create a viem client
+    const client = createPublicClient({
+      chain: mainnet,
+      transport: http()
+    });
+
+    console.log("client", client);
+    
+    // Get Morpho contract
+    const morpho = getContract({
+      address: MORPHO_ADDRESSES.MORPHO_BLUE as `0x${string}`,
+      abi: MORPHO_ABI,
+      client
+    });
+
+    console.log("morpho", morpho);
+    
+    const positions: LoanPosition[] = [];
+    
+    // Check positions across known markets
+    for (const marketId of MORPHO_MARKET_IDS) {
+      try {
+        // Get user position in this market
+
+        const position = await AccrualPosition.fetch(
+          walletAddress as `0x${string}`,
+          marketId as MarketId,
+          client
+        );
+
+
+        console.log("position", position);
+
+        console.log("Borrow Assets:", position.borrowAssets);
+        console.log("Is Healthy:", position.isHealthy);
+        console.log("Max Borrowable Assets:", position.maxBorrowableAssets);
+      } catch (err) {
+        console.error(`Error fetching market ${marketId}:`, err);
+        // Continue to next market
+      }
     }
-  ];
-  
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  return mockPositions;
+    
+    return positions;
+  } catch (error) {
+    console.error('Error fetching positions:', error);
+    throw new Error('Failed to fetch positions from Morpho');
+  }
 } 

@@ -17,6 +17,7 @@ export interface LoanPosition {
   timestamp: number; // When the position was created
   healthFactor: string; // Current health factor
   liquidationPrice: string; // Price at which position gets liquidated
+  isLiquidatable?: boolean; // Whether the position can be liquidated
 }
 
 // Response type for Morpho operations

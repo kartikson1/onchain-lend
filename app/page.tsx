@@ -16,7 +16,7 @@ import {
 } from '@coinbase/onchainkit/identity';
 import ImageSvg from './svg/Image';
 import Link from 'next/link';
-import LoanPositions from './components/LoanPositions';
+import PositionsList from './components/PositionsList';
 
 export default function App() {
   return (
@@ -66,7 +66,7 @@ export default function App() {
             </div>
           </div>
           
-          <LoanPositions />
+          <PositionsList />
           
           <p className="text-center mt-8 mb-6 text-sm text-gray-500">
             Powered by Morpho Protocol
